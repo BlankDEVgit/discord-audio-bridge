@@ -39,6 +39,7 @@ A lightweight Discord bot that captures your PC's audio output through a virtual
 | **Health Monitoring** | Continuously checks the audio stream and restarts it if it stops |
 | **Quality Presets** | Choose from Low, Balanced, High, or Ultra — zero latency impact |
 | **Bad Internet Mode** | Enables Opus FEC + reduced bitrate for unstable connections |
+| **Live Commands** | Change quality, toggle bad-internet, check status — all while running |
 | **Clean Codebase** | Clear function names, full documentation — easy to read and modify |
 | **Minimal Footprint** | Only enables the Discord intents it actually needs |
 
@@ -114,7 +115,22 @@ The bot will connect and start streaming. You'll see:
 [BOT] Logged in as YourBot#1234
 [STREAM] Connecting to #your-channel (Your Server)...
 [STREAM] Audio streaming started.
+[QUALITY] balanced — 64kbps stereo
 ```
+
+### 5. Live commands
+
+Once the bot is running, type commands directly in the terminal:
+
+| Command | Description |
+|---|---|
+| `quality <preset>` | Switch audio quality: `low`, `balanced`, `high`, `ultra` |
+| `bad-internet <on\|off>` | Toggle bad internet mode (FEC + low bitrate) |
+| `status` | Show current settings and connection state |
+| `help` | List all commands |
+| `quit` / `exit` | Stop the bot |
+
+Changes apply **instantly** — no restart needed. Switching between mono and stereo causes a brief ~200ms audio blip as the FFmpeg source restarts.
 
 ---
 
