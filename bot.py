@@ -10,6 +10,7 @@ through any device connected to the same voice channel (e.g. PS5).
 """
 
 import asyncio
+import functools
 import os
 import sys
 
@@ -37,8 +38,15 @@ MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "30"))    # Max backo
 HEALTH_CHECK_INTERVAL = float(os.getenv("HEALTH_CHECK_INTERVAL", "0.5"))  # Stream poll (s)
 PROCESS_PRIORITY = os.getenv("PROCESS_PRIORITY", "high")             # "realtime", "high", or "normal"
 SELF_DEAF = os.getenv("SELF_DEAF", "true").lower() == "true"         # Deaf the bot in VC
-AUDIO_QUALITY = os.getenv("AUDIO_QUALITY", "balanced")               # "low", "balanced", "high", "ultra"
-BAD_INTERNET = os.getenv("BAD_INTERNET", "false").lower() == "true"  # Enable FEC + reduced bitrate
+
+# ──────────────────────────────────────────────
+#  Runtime state — mutable, changed via commands
+# ──────────────────────────────────────────────
+runtime = {
+    "quality": os.getenv("AUDIO_QUALITY", "balanced"),
+    "bad_internet": os.getenv("BAD_INTERNET", "false").lower() == "true",
+    "vc": None,  # Active voice client reference (set by stream_audio)
+}
 
 # ──────────────────────────────────────────────
 #  Audio quality presets
@@ -72,8 +80,8 @@ def validate_config():
         errors.append("VOICE_CHANNEL_ID is missing — set it in your .env file.")
     if not os.path.isfile(FFMPEG_PATH):
         errors.append(f"FFmpeg not found at '{FFMPEG_PATH}' — download it or set FFMPEG_PATH.")
-    if AUDIO_QUALITY not in QUALITY_PRESETS:
-        errors.append(f"AUDIO_QUALITY '{AUDIO_QUALITY}' is invalid — use: {', '.join(QUALITY_PRESETS)}.")
+    if runtime["quality"] not in QUALITY_PRESETS:
+        errors.append(f"AUDIO_QUALITY '{runtime['quality']}' is invalid — use: {', '.join(QUALITY_PRESETS)}.")
     if errors:
         for err in errors:
             print(f"[ERROR] {err}")
@@ -110,8 +118,8 @@ def set_process_priority():
 # ──────────────────────────────────────────────
 def get_audio_settings():
     """Resolve the active audio settings from preset + bad internet mode."""
-    preset = QUALITY_PRESETS[AUDIO_QUALITY]
-    if BAD_INTERNET:
+    preset = QUALITY_PRESETS[runtime["quality"]]
+    if runtime["bad_internet"]:
         return {
             "bitrate": BAD_INTERNET_OVERRIDES["bitrate"],
             "channels": BAD_INTERNET_OVERRIDES["channels"],
@@ -178,7 +186,7 @@ def configure_encoder(vc):
         vc.encoder.set_fec(settings["fec"])
         vc.encoder.set_expected_packet_loss_percent(settings["packet_loss_percent"])
 
-        mode = "bad internet" if BAD_INTERNET else AUDIO_QUALITY
+        mode = "bad internet" if runtime["bad_internet"] else runtime["quality"]
         ch_label = "mono" if settings["channels"] == 1 else "stereo"
         print(f"[QUALITY] {mode} — {settings['bitrate'] // 1000}kbps {ch_label}"
               f"{' + FEC' if settings['fec'] else ''}")
@@ -239,6 +247,7 @@ async def stream_audio():
             print("[STREAM] Audio streaming started.")
             backoff = RECONNECT_DELAY
 
+            runtime["vc"] = vc
             vc.play(create_audio_source())
             configure_encoder(vc)
 
@@ -254,6 +263,7 @@ async def stream_audio():
                         break
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
+            runtime["vc"] = None
             print("[STREAM] Disconnected — reconnecting...")
 
         except Exception as exc:
@@ -263,13 +273,125 @@ async def stream_audio():
         await asyncio.sleep(backoff)
 
 
+# ──────────────────────────────────────────────
+#  Live settings swap
+# ──────────────────────────────────────────────
+def apply_live_settings():
+    """
+    Apply current runtime settings to the active voice client.
+
+    Bitrate and FEC are changed instantly on the Opus encoder.
+    If the channel count changed (mono ↔ stereo), the FFmpeg
+    source is restarted — causes a brief audio blip (~200ms).
+    """
+    vc = runtime["vc"]
+    if vc is None or not vc.is_connected():
+        print("[CMD] Not connected — settings will apply on next connect.")
+        return
+
+    settings = get_audio_settings()
+    needs_source_restart = False
+
+    # Check if channel count changed (requires FFmpeg restart)
+    if vc.is_playing() and vc.source:
+        old_channels = 1 if runtime.get("_last_channels") == 1 else 2
+        if settings["channels"] != old_channels:
+            needs_source_restart = True
+
+    runtime["_last_channels"] = settings["channels"]
+
+    if needs_source_restart:
+        print("[CMD] Channel count changed — restarting audio source...")
+        vc.stop()
+        vc.play(create_audio_source())
+
+    configure_encoder(vc)
+
+
+# ──────────────────────────────────────────────
+#  Command console (runs alongside the bot)
+# ──────────────────────────────────────────────
+HELP_TEXT = """
+Commands (type while the bot is running):
+  quality <preset>   Set audio quality: low, balanced, high, ultra
+  bad-internet <on|off>  Toggle bad internet mode (FEC + low bitrate)
+  status             Show current settings
+  help               Show this message
+  quit / exit        Stop the bot
+""".strip()
+
+
+async def command_console():
+    """Read commands from stdin without blocking the event loop."""
+    await client.wait_until_ready()
+    loop = asyncio.get_event_loop()
+    print(f"\n{HELP_TEXT}\n")
+
+    while True:
+        try:
+            line = await loop.run_in_executor(None, functools.partial(sys.stdin.readline))
+            cmd = line.strip().lower()
+            if not cmd:
+                continue
+
+            parts = cmd.split(None, 1)
+            command = parts[0]
+            arg = parts[1] if len(parts) > 1 else ""
+
+            if command == "help":
+                print(HELP_TEXT)
+
+            elif command == "quality":
+                if arg not in QUALITY_PRESETS:
+                    print(f"[CMD] Invalid preset. Choose: {', '.join(QUALITY_PRESETS)}")
+                else:
+                    runtime["quality"] = arg
+                    apply_live_settings()
+
+            elif command == "bad-internet":
+                if arg in ("on", "true", "1"):
+                    runtime["bad_internet"] = True
+                    apply_live_settings()
+                elif arg in ("off", "false", "0"):
+                    runtime["bad_internet"] = False
+                    apply_live_settings()
+                else:
+                    print("[CMD] Usage: bad-internet <on|off>")
+
+            elif command == "status":
+                settings = get_audio_settings()
+                ch = "mono" if settings["channels"] == 1 else "stereo"
+                vc = runtime["vc"]
+                connected = "yes" if vc and vc.is_connected() else "no"
+                playing = "yes" if vc and vc.is_playing() else "no"
+                print(f"[STATUS] Quality: {runtime['quality']} | "
+                      f"Bad internet: {'on' if runtime['bad_internet'] else 'off'} | "
+                      f"{settings['bitrate'] // 1000}kbps {ch}"
+                      f"{' + FEC' if settings['fec'] else ''} | "
+                      f"Connected: {connected} | Playing: {playing}")
+
+            elif command in ("quit", "exit"):
+                print("[BOT] Shutting down...")
+                await client.close()
+                return
+
+            else:
+                print(f"[CMD] Unknown command: {command} — type 'help' for options.")
+
+        except (EOFError, KeyboardInterrupt):
+            return
+        except Exception as exc:
+            print(f"[CMD] Error: {exc}")
+
+
 @client.event
 async def on_ready():
-    """Start the audio stream once the bot is connected to Discord."""
+    """Start the audio stream and command console once connected."""
     global voice_task
     print(f"[BOT] Logged in as {client.user}")
     if voice_task is None or voice_task.done():
         voice_task = asyncio.create_task(stream_audio())
+        asyncio.create_task(command_console())
 
 
 # ──────────────────────────────────────────────
