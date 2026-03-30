@@ -37,6 +37,27 @@ MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "30"))    # Max backo
 HEALTH_CHECK_INTERVAL = float(os.getenv("HEALTH_CHECK_INTERVAL", "0.5"))  # Stream poll (s)
 PROCESS_PRIORITY = os.getenv("PROCESS_PRIORITY", "high")             # "realtime", "high", or "normal"
 SELF_DEAF = os.getenv("SELF_DEAF", "true").lower() == "true"         # Deaf the bot in VC
+AUDIO_QUALITY = os.getenv("AUDIO_QUALITY", "balanced")               # "low", "balanced", "high", "ultra"
+BAD_INTERNET = os.getenv("BAD_INTERNET", "false").lower() == "true"  # Enable FEC + reduced bitrate
+
+# ──────────────────────────────────────────────
+#  Audio quality presets
+#  Bitrate and channel count — no latency impact
+#  (Opus always encodes in fixed 20ms frames)
+# ──────────────────────────────────────────────
+QUALITY_PRESETS = {
+    "low":      {"bitrate": 32_000,  "channels": 1},
+    "balanced": {"bitrate": 64_000,  "channels": 2},
+    "high":     {"bitrate": 96_000,  "channels": 2},
+    "ultra":    {"bitrate": 128_000, "channels": 2},
+}
+
+BAD_INTERNET_OVERRIDES = {
+    "bitrate": 32_000,
+    "channels": 1,
+    "fec": True,
+    "packet_loss_percent": 25,
+}
 
 
 # ──────────────────────────────────────────────
@@ -51,6 +72,8 @@ def validate_config():
         errors.append("VOICE_CHANNEL_ID is missing — set it in your .env file.")
     if not os.path.isfile(FFMPEG_PATH):
         errors.append(f"FFmpeg not found at '{FFMPEG_PATH}' — download it or set FFMPEG_PATH.")
+    if AUDIO_QUALITY not in QUALITY_PRESETS:
+        errors.append(f"AUDIO_QUALITY '{AUDIO_QUALITY}' is invalid — use: {', '.join(QUALITY_PRESETS)}.")
     if errors:
         for err in errors:
             print(f"[ERROR] {err}")
@@ -83,16 +106,40 @@ def set_process_priority():
 
 
 # ──────────────────────────────────────────────
+#  Audio settings resolver
+# ──────────────────────────────────────────────
+def get_audio_settings():
+    """Resolve the active audio settings from preset + bad internet mode."""
+    preset = QUALITY_PRESETS[AUDIO_QUALITY]
+    if BAD_INTERNET:
+        return {
+            "bitrate": BAD_INTERNET_OVERRIDES["bitrate"],
+            "channels": BAD_INTERNET_OVERRIDES["channels"],
+            "fec": True,
+            "packet_loss_percent": BAD_INTERNET_OVERRIDES["packet_loss_percent"],
+        }
+    return {
+        "bitrate": preset["bitrate"],
+        "channels": preset["channels"],
+        "fec": False,
+        "packet_loss_percent": 0,
+    }
+
+
+# ──────────────────────────────────────────────
 #  Audio source
 # ──────────────────────────────────────────────
 def create_audio_source():
     """
     Build an FFmpeg audio source tuned for ultra-low latency.
 
-    The pipeline: DirectShow capture → raw PCM at 48 kHz stereo →
+    The pipeline: DirectShow capture → raw PCM at 48 kHz →
     Discord voice connection. Every buffer and probe setting is
     minimized to keep end-to-end delay as short as possible.
     """
+    settings = get_audio_settings()
+    channels = settings["channels"]
+
     return discord.FFmpegPCMAudio(
         f"audio={AUDIO_DEVICE}",
         executable=FFMPEG_PATH,
@@ -111,13 +158,32 @@ def create_audio_source():
             f"-rtbufsize {RT_BUFFER_SIZE}"
         ),
         options=(
-            # Output: raw PCM at Discord's native format (48 kHz, stereo, 16-bit)
-            "-ac 2 -ar 48000 -f s16le "
+            # Output: raw PCM at Discord's native format (48 kHz, 16-bit)
+            f"-ac {channels} -ar 48000 -f s16le "
             # Force-flush every packet — zero output buffering
             "-flush_packets 1 "
             "-fflags +flush_packets"
         ),
     )
+
+
+# ──────────────────────────────────────────────
+#  Opus encoder configuration
+# ──────────────────────────────────────────────
+def configure_encoder(vc):
+    """Apply quality preset and bad-internet settings to the Opus encoder."""
+    settings = get_audio_settings()
+    try:
+        vc.encoder.set_bitrate(settings["bitrate"])
+        vc.encoder.set_fec(settings["fec"])
+        vc.encoder.set_expected_packet_loss_percent(settings["packet_loss_percent"])
+
+        mode = "bad internet" if BAD_INTERNET else AUDIO_QUALITY
+        ch_label = "mono" if settings["channels"] == 1 else "stereo"
+        print(f"[QUALITY] {mode} — {settings['bitrate'] // 1000}kbps {ch_label}"
+              f"{' + FEC' if settings['fec'] else ''}")
+    except Exception as exc:
+        print(f"[QUALITY] Could not configure encoder: {exc}")
 
 
 # ──────────────────────────────────────────────
@@ -174,6 +240,7 @@ async def stream_audio():
             backoff = RECONNECT_DELAY
 
             vc.play(create_audio_source())
+            configure_encoder(vc)
 
             # Health monitor — restart source if it stops unexpectedly
             while vc.is_connected():
@@ -181,6 +248,7 @@ async def stream_audio():
                     print("[STREAM] Source stopped — restarting...")
                     try:
                         vc.play(create_audio_source())
+                        configure_encoder(vc)
                     except Exception as exc:
                         print(f"[STREAM] Restart failed: {exc}")
                         break

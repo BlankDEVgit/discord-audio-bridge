@@ -37,6 +37,8 @@ A lightweight Discord bot that captures your PC's audio output through a virtual
 | **Process Priority Boost** | Optionally runs at Realtime or High priority to minimize jitter |
 | **Self-Deafened** | Bot deafens itself by default to prevent echo loops |
 | **Health Monitoring** | Continuously checks the audio stream and restarts it if it stops |
+| **Quality Presets** | Choose from Low, Balanced, High, or Ultra — zero latency impact |
+| **Bad Internet Mode** | Enables Opus FEC + reduced bitrate for unstable connections |
 | **Clean Codebase** | Clear function names, full documentation — easy to read and modify |
 | **Minimal Footprint** | Only enables the Discord intents it actually needs |
 
@@ -134,7 +136,29 @@ All settings live in your `.env` file. Only `BOT_TOKEN` and `VOICE_CHANNEL_ID` a
 | `MAX_RECONNECT_DELAY` | `30` | Maximum reconnect backoff (seconds) |
 | `HEALTH_CHECK_INTERVAL` | `0.5` | Stream health poll interval (seconds) |
 | `PROCESS_PRIORITY` | `high` | Process priority: `realtime`, `high`, or `normal` |
+| `AUDIO_QUALITY` | `balanced` | Quality preset: `low`, `balanced`, `high`, `ultra` |
+| `BAD_INTERNET` | `false` | Enable FEC + forced mono 32kbps for unstable connections |
 | `SELF_DEAF` | `true` | Deafen the bot in voice chat |
+
+### Audio Quality Presets
+
+| Preset | Bitrate | Channels | Best for |
+|---|---|---|---|
+| `low` | 32 kbps | Mono | Saving bandwidth, voice-only content |
+| `balanced` | 64 kbps | Stereo | General use — music, games, videos (default) |
+| `high` | 96 kbps | Stereo | High-fidelity music streaming |
+| `ultra` | 128 kbps | Stereo | Maximum quality Discord supports |
+
+> All presets produce **zero additional latency** — Opus always encodes in fixed 20ms frames regardless of bitrate.
+
+### Bad Internet Mode
+
+Set `BAD_INTERNET=true` if your connection is unstable. This enables:
+- **Opus FEC** (Forward Error Correction) — embeds recovery data so lost packets can be reconstructed from the next one
+- **Forced 32kbps mono** — reduces bandwidth requirements
+- **25% expected packet loss** — tells Opus to optimize for lossy conditions
+
+FEC is built into the Opus codec and adds **no extra latency** — it's recovery data piggybacked onto existing packets.
 
 ### Latency Tuning Tips
 
