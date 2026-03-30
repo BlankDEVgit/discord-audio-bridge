@@ -1,0 +1,31 @@
+# Environment / secrets
+.env
+
+# FFmpeg binary (users download their own)
+ffmpeg.exe
+ffmpeg
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
