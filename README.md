@@ -130,7 +130,7 @@ Once the bot is running, type commands directly in the terminal:
 | `help` | List all commands |
 | `quit` / `exit` | Stop the bot |
 
-Changes apply **instantly** — no restart needed. Switching between mono and stereo causes a brief ~200ms audio blip as the FFmpeg source restarts.
+Changes apply **instantly** — no restart needed. Only the Opus encoder bitrate changes; the FFmpeg pipeline is never touched.
 
 ---
 
@@ -144,34 +144,27 @@ All settings live in your `.env` file. Only `BOT_TOKEN` and `VOICE_CHANNEL_ID` a
 | `VOICE_CHANNEL_ID` | *required* | Target voice channel ID |
 | `AUDIO_DEVICE` | `CABLE Output (VB-Audio Virtual Cable)` | Virtual audio cable device name |
 | `FFMPEG_PATH` | `ffmpeg.exe` | Path to FFmpeg binary |
-| `AUDIO_BUFFER_SIZE` | `10` | DirectShow buffer in ms (lower = less delay) |
-| `PROBE_SIZE` | `32` | FFmpeg probe size in bytes |
-| `THREAD_QUEUE_SIZE` | `32` | FFmpeg read thread queue depth |
-| `RT_BUFFER_SIZE` | `64k` | Real-time capture buffer |
 | `RECONNECT_DELAY` | `2` | Initial reconnect delay (seconds) |
-| `MAX_RECONNECT_DELAY` | `30` | Maximum reconnect backoff (seconds) |
-| `HEALTH_CHECK_INTERVAL` | `0.5` | Stream health poll interval (seconds) |
-| `PROCESS_PRIORITY` | `high` | Process priority: `realtime`, `high`, or `normal` |
 | `AUDIO_QUALITY` | `balanced` | Quality preset: `low`, `balanced`, `high`, `ultra` |
-| `BAD_INTERNET` | `false` | Enable FEC + forced mono 32kbps for unstable connections |
-| `SELF_DEAF` | `true` | Deafen the bot in voice chat |
+| `BAD_INTERNET` | `false` | Enable FEC + reduced bitrate for unstable connections |
+| `ENABLE_CONSOLE` | `true` | Enable/disable the live command console |
 
 ### Audio Quality Presets
 
-| Preset | Bitrate | Channels | Best for |
-|---|---|---|---|
-| `low` | 48 kbps | Mono | Saving bandwidth, voice-only content |
-| `balanced` | 128 kbps | Stereo | General use — music, games, videos (default) |
-| `high` | 256 kbps | Stereo | High-fidelity music streaming |
-| `ultra` | 384 kbps | Stereo | Maximum quality Discord supports |
+| Preset | Bitrate | Best for |
+|---|---|---|
+| `low` | 48 kbps | Saving bandwidth, voice content |
+| `balanced` | 128 kbps | General use — music, games, videos (default) |
+| `high` | 256 kbps | High-fidelity music streaming |
+| `ultra` | 384 kbps | Maximum quality Discord supports |
 
-> All presets produce **zero additional latency** — Opus always encodes in fixed 20ms frames regardless of bitrate.
+> Presets only change the **Opus encoder bitrate** — the FFmpeg audio pipeline is never modified. **Zero additional latency**, zero risk of breaking audio.
 
 ### Bad Internet Mode
 
 Set `BAD_INTERNET=true` if your connection is unstable. This enables:
 - **Opus FEC** (Forward Error Correction) — embeds recovery data so lost packets can be reconstructed from the next one
-- **Forced 32kbps mono** — reduces bandwidth requirements
+- **32kbps bitrate** — reduces bandwidth requirements
 - **25% expected packet loss** — tells Opus to optimize for lossy conditions
 
 FEC is built into the Opus codec and adds **no extra latency** — it's recovery data piggybacked onto existing packets.
