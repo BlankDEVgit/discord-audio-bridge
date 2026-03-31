@@ -160,10 +160,10 @@ All settings live in your `.env` file. Only `BOT_TOKEN` and `VOICE_CHANNEL_ID` a
 
 | Preset | Bitrate | Channels | Best for |
 |---|---|---|---|
-| `low` | 32 kbps | Mono | Saving bandwidth, voice-only content |
-| `balanced` | 64 kbps | Stereo | General use — music, games, videos (default) |
-| `high` | 96 kbps | Stereo | High-fidelity music streaming |
-| `ultra` | 128 kbps | Stereo | Maximum quality Discord supports |
+| `low` | 48 kbps | Mono | Saving bandwidth, voice-only content |
+| `balanced` | 128 kbps | Stereo | General use — music, games, videos (default) |
+| `high` | 256 kbps | Stereo | High-fidelity music streaming |
+| `ultra` | 384 kbps | Stereo | Maximum quality Discord supports |
 
 > All presets produce **zero additional latency** — Opus always encodes in fixed 20ms frames regardless of bitrate.
 

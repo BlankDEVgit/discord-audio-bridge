@@ -54,10 +54,10 @@ runtime = {
 #  (Opus always encodes in fixed 20ms frames)
 # ──────────────────────────────────────────────
 QUALITY_PRESETS = {
-    "low":      {"bitrate": 32_000,  "channels": 1},
-    "balanced": {"bitrate": 64_000,  "channels": 2},
-    "high":     {"bitrate": 96_000,  "channels": 2},
-    "ultra":    {"bitrate": 128_000, "channels": 2},
+    "low":      {"bitrate": 48_000,  "channels": 1},
+    "balanced": {"bitrate": 128_000, "channels": 2},  # matches discord.py default
+    "high":     {"bitrate": 256_000, "channels": 2},
+    "ultra":    {"bitrate": 384_000, "channels": 2},
 }
 
 BAD_INTERNET_OVERRIDES = {
@@ -178,8 +178,15 @@ def create_audio_source():
 # ──────────────────────────────────────────────
 #  Opus encoder configuration
 # ──────────────────────────────────────────────
-def configure_encoder(vc):
-    """Apply quality preset and bad-internet settings to the Opus encoder."""
+def configure_encoder(vc, force=False):
+    """Apply quality preset and bad-internet settings to the Opus encoder.
+
+    Skips configuration when using 'balanced' preset without bad-internet,
+    since balanced matches discord.py's native defaults exactly.
+    """
+    if not force and runtime["quality"] == "balanced" and not runtime["bad_internet"]:
+        return
+
     settings = get_audio_settings()
     try:
         vc.encoder.set_bitrate(settings["bitrate"])
@@ -305,7 +312,7 @@ def apply_live_settings():
         vc.stop()
         vc.play(create_audio_source())
 
-    configure_encoder(vc)
+    configure_encoder(vc, force=True)
 
 
 # ──────────────────────────────────────────────
