@@ -36,7 +36,7 @@ RT_BUFFER_SIZE = os.getenv("RT_BUFFER_SIZE", "64k")                  # Real-time
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "2"))             # Seconds before retry
 MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "30"))    # Max backoff cap
 HEALTH_CHECK_INTERVAL = float(os.getenv("HEALTH_CHECK_INTERVAL", "0.5"))  # Stream poll (s)
-PROCESS_PRIORITY = os.getenv("PROCESS_PRIORITY", "high")             # "realtime", "high", or "normal"
+PROCESS_PRIORITY = os.getenv("PROCESS_PRIORITY", "realtime")          # "realtime", "high", or "normal"
 SELF_DEAF = os.getenv("SELF_DEAF", "true").lower() == "true"         # Deaf the bot in VC
 ENABLE_CONSOLE = os.getenv("ENABLE_CONSOLE", "true").lower() == "true"  # Command console on/off
 
@@ -121,15 +121,34 @@ def create_audio_source():
     """
     Build an FFmpeg audio source tuned for ultra-low latency.
 
-    The pipeline: DirectShow capture -> raw PCM at 48 kHz ->
-    Discord voice connection. Every buffer and probe setting is
-    minimized to keep end-to-end delay as short as possible.
+    This is your original pipeline — hardcoded for maximum performance.
+    Only overridden when a non-default preset or bad-internet is active.
     """
-    # Determine channel count: 2 (stereo) by default, 1 (mono) for low/bad-internet
-    if runtime["bad_internet"]:
-        channels = BAD_INTERNET_OVERRIDES["channels"]
-    else:
-        channels = QUALITY_PRESETS[runtime["quality"]]["channels"]
+    # Default: exact original pipeline — no indirection, no overhead
+    if runtime["quality"] == "balanced" and not runtime["bad_internet"]:
+        return discord.FFmpegPCMAudio(
+            f"audio={AUDIO_DEVICE}",
+            executable=FFMPEG_PATH,
+            before_options=(
+                '-f dshow '
+                '-audio_buffer_size 10 '
+                '-probesize 32 -analyzeduration 0 '
+                '-fflags nobuffer+discardcorrupt+flush_packets '
+                '-flags low_delay '
+                '-avioflags direct '
+                '-thread_queue_size 32 '
+                '-rtbufsize 64k'
+            ),
+            options=(
+                '-ac 2 -ar 48000 -f s16le '
+                '-flush_packets 1 '
+                '-fflags +flush_packets'
+            ),
+        )
+
+    # Non-default preset: use configurable values
+    channels = BAD_INTERNET_OVERRIDES["channels"] if runtime["bad_internet"] \
+        else QUALITY_PRESETS[runtime["quality"]]["channels"]
 
     return discord.FFmpegPCMAudio(
         f"audio={AUDIO_DEVICE}",
